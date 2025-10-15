@@ -91,12 +91,21 @@ CScrollOverview::CScrollOverview(PHLWORKSPACE startedOn_, bool swipe_) : started
             moveViewportWorkspace(e.delta > 0);
     };
 
+    auto onWindowOpen = [this](void* self, SCallbackInfo& info, std::any param) {
+        if (closing)
+            return;
+
+        redrawAll();
+    };
+
     mouseMoveHook = g_pHookSystem->hookDynamic("mouseMove", onCursorMove);
     touchMoveHook = g_pHookSystem->hookDynamic("touchMove", onCursorMove);
     mouseAxisHook = g_pHookSystem->hookDynamic("mouseAxis", onMouseAxis);
 
     mouseButtonHook = g_pHookSystem->hookDynamic("mouseButton", onCursorSelect);
     touchDownHook   = g_pHookSystem->hookDynamic("touchDown", onCursorSelect);
+
+    windowOpenHook = g_pHookSystem->hookDynamic("openWindow", onWindowOpen);
 
     g_pInputManager->setCursorImageUntilUnset("left_ptr");
 
@@ -275,6 +284,9 @@ void CScrollOverview::redrawWindowImage(SP<SWindowImage> img) {
 
     g_pHyprOpenGL->m_renderData.blockScreenShader = true;
     g_pHyprRenderer->endRender();
+
+    img->lastWindowPosition = img->pWindow->m_realPosition->value();
+    img->lastWindowSize     = img->pWindow->m_realSize->value();
 }
 
 void CScrollOverview::redrawAll(bool forcelowres) {
@@ -391,6 +403,23 @@ void CScrollOverview::onWorkspaceChange() {
 }
 
 void CScrollOverview::render() {
+    bool needsDamage = false;
+    for (const auto& img : images) {
+        for (const auto& i : img->windowImages) {
+            if (!i->pWindow)
+                continue;
+
+            if (i->lastWindowSize != i->pWindow->m_realSize->value() || i->lastWindowPosition != i->pWindow->m_realPosition->value()) {
+                needsDamage           = true;
+                i->lastWindowPosition = i->pWindow->m_realPosition->value();
+                i->lastWindowSize     = i->pWindow->m_realSize->value();
+            }
+        }
+    }
+
+    if (needsDamage)
+        damage();
+
     g_pHyprRenderer->m_renderPass.add(makeUnique<COverviewPassElement>());
 }
 
@@ -417,7 +446,14 @@ void CScrollOverview::fullRender() {
     // render all views
     float yoff = -(float)activeIdx * pMonitor->m_size.y * scale->value();
     for (const auto& wimg : images) {
+        bool dirty = false;
+
         for (const auto& img : wimg->windowImages) {
+            if (!img->pWindow) {
+                dirty = true;
+                continue;
+            }
+
             CBox texbox = CBox{img->pWindow->m_realPosition->value() - pMonitor->m_position, pMonitor->m_size};
 
             // scale the box to the viewport center
@@ -427,7 +463,7 @@ void CScrollOverview::fullRender() {
 
             texbox.scale(pMonitor->m_scale).round();
             CRegion damage{0, 0, INT16_MAX, INT16_MAX};
-            g_pHyprOpenGL->renderTextureInternal(img->fb.getTexture(), texbox, {.damage = &damage, .a = 1.0});
+            g_pHyprOpenGL->renderTextureInternal(img->fb.getTexture(), texbox, {.damage = &damage, .a = 1.0 * img->pWindow->m_alpha->value()});
 
             if (img->highlight) {
                 CBox texbox2 = CBox{img->pWindow->m_realPosition->value(), img->pWindow->m_realSize->value()}
@@ -445,6 +481,9 @@ void CScrollOverview::fullRender() {
         g_pHyprOpenGL->renderTextureInternal(floatingFb.getTexture(), floatbox, {.damage = &damage, .a = 1.0});
 
         yoff += pMonitor->m_size.y * scale->value();
+
+        if (dirty)
+            std::erase_if(wimg->windowImages, [](const auto& e) { return !e->pWindow; });
     }
 }
 

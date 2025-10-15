@@ -51,6 +51,7 @@ class CScrollOverview : public IOverview {
         CFramebuffer            fb;
         bool                    highlight = false;
         UP<CHyprSignalListener> windowCommit;
+        Vector2D                lastWindowPosition, lastWindowSize;
     };
 
     void redrawWindowImage(SP<SWindowImage>);
@@ -83,6 +84,7 @@ class CScrollOverview : public IOverview {
     SP<HOOK_CALLBACK_FN>             touchMoveHook;
     SP<HOOK_CALLBACK_FN>             touchDownHook;
     SP<HOOK_CALLBACK_FN>             mouseAxisHook;
+    SP<HOOK_CALLBACK_FN>             windowOpenHook;
 
     bool                             swipe             = false;
     bool                             swipeWasCommenced = false;
