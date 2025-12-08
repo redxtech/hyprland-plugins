@@ -1,0 +1,4 @@
+[submodule "hyprselect"]
+	path = hyprselect
+	url = git@github.com:redxtech/hyprselect.git
+	branch = add-nix-flake

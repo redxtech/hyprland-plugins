@@ -35,6 +35,7 @@
         hyprexpo
         hyprfocus
         hyprscrolling
+        hyprselect
         hyprtrails
         hyprwinwrap
         xtra-dispatchers
@@ -57,6 +58,7 @@
             hyprexpo = callPackage ./hyprexpo {};
             hyprfocus = callPackage ./hyprfocus {};
             hyprscrolling = callPackage ./hyprscrolling {};
+            hyprselect = callPackage ./hyprselect {};
             hyprtrails = callPackage ./hyprtrails {};
             hyprwinwrap = callPackage ./hyprwinwrap {};
             xtra-dispatchers = callPackage ./xtra-dispatchers {};

@@ -9,6 +9,7 @@ This repo houses official plugins for Hyprland.
  - hyprexpo -> adds an expo-like workspace overview
  - hyprfocus -> flashfocus for hyprland
  - hyprscrolling -> adds a scrolling layout to hyprland
+ - hyprselect -> adds a completely useless desktop selection box
  - hyprtrails -> adds smooth trails behind moving windows
  - hyprwinwrap -> clone of xwinwrap, allows you to put any app as a wallpaper
  - xtra-dispatchers -> adds some new dispatchers
