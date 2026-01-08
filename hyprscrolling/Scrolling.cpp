@@ -4,6 +4,7 @@
 
 #include <hyprland/src/Compositor.hpp>
 #include <hyprland/src/desktop/state/FocusState.hpp>
+#include <hyprland/src/helpers/time/Timer.hpp>
 #include <hyprland/src/managers/input/InputManager.hpp>
 #include <hyprland/src/managers/eventLoop/EventLoopManager.hpp>
 #include <hyprland/src/config/ConfigManager.hpp>
@@ -277,7 +278,7 @@ void SWorkspaceData::recalculate(bool forceInstant) {
     static const auto PFSONONE = CConfigValue<Hyprlang::INT>("plugin:hyprscrolling:fullscreen_on_one_column");
 
     if (!workspace) {
-        Debug::log(ERR, "[scroller] broken internal state on workspace data");
+        Log::logger->log(Log::ERR, "[scroller] broken internal state on workspace data");
         return;
     }
 
@@ -289,6 +290,7 @@ void SWorkspaceData::recalculate(bool forceInstant) {
 
     double       currentLeft = 0;
     const double cameraLeft  = MAX_WIDTH < USABLE.w ? std::round((MAX_WIDTH - USABLE.w) / 2.0) : leftOffset; // layout pixels
+    const auto   workAreaPos = layout->workAreaOnWorkspace(PMONITOR->m_activeWorkspace).pos();
 
     for (size_t i = 0; i < columns.size(); ++i) {
         const auto&  COL        = columns[i];
@@ -296,8 +298,7 @@ void SWorkspaceData::recalculate(bool forceInstant) {
         const double ITEM_WIDTH = *PFSONONE && columns.size() == 1 ? USABLE.w : USABLE.w * COL->columnWidth;
 
         for (const auto& WINDOW : COL->windowDatas) {
-            WINDOW->layoutBox =
-                CBox{currentLeft, currentTop, ITEM_WIDTH, WINDOW->windowSize * USABLE.h}.translate(PMONITOR->logicalBoxMinusReserved().pos() + Vector2D{-cameraLeft, 0.0});
+            WINDOW->layoutBox = CBox{currentLeft, currentTop, ITEM_WIDTH, WINDOW->windowSize * USABLE.h}.translate(workAreaPos + Vector2D{-cameraLeft, 0.0});
 
             currentTop += WINDOW->windowSize * USABLE.h;
 
@@ -350,7 +351,7 @@ void CScrollingLayout::applyNodeDataToWindow(SP<SScrollingWindowData> data, bool
 
     if (!data || !data->column || !data->column->workspace) {
         if (!data->overrideWorkspace) {
-            Debug::log(ERR, "[scroller] broken internal state on workspace (1)");
+            Log::logger->log(Log::ERR, "[scroller] broken internal state on workspace (1)");
             return;
         }
 
@@ -362,12 +363,12 @@ void CScrollingLayout::applyNodeDataToWindow(SP<SScrollingWindowData> data, bool
     }
 
     if (!PMONITOR || !PWORKSPACE) {
-        Debug::log(ERR, "[scroller] broken internal state on workspace (2)");
+        Log::logger->log(Log::ERR, "[scroller] broken internal state on workspace (2)");
         return;
     }
 
     // for gaps outer
-    const auto WORKAREA      = PMONITOR->logicalBoxMinusReserved();
+    const auto WORKAREA      = workAreaOnWorkspace(PWORKSPACE);
     const bool DISPLAYLEFT   = !hasWindowsLeft;
     const bool DISPLAYRIGHT  = !hasWindowsRight;
     const bool DISPLAYTOP    = STICKS(data->layoutBox.y, WORKAREA.y);
@@ -379,7 +380,7 @@ void CScrollingLayout::applyNodeDataToWindow(SP<SScrollingWindowData> data, bool
     const auto WORKSPACERULE = g_pConfigManager->getWorkspaceRuleFor(PWORKSPACE);
 
     if (!validMapped(PWINDOW)) {
-        Debug::log(ERR, "Node {} holding invalid {}!!", (uintptr_t)data.get(), PWINDOW);
+        Log::logger->log(Log::ERR, "Node {} holding invalid {}!!", (uintptr_t)data.get(), PWINDOW);
         onWindowRemovedTiling(PWINDOW);
         return;
     }
@@ -390,10 +391,8 @@ void CScrollingLayout::applyNodeDataToWindow(SP<SScrollingWindowData> data, bool
     PWINDOW->m_ruleApplicator->resetProps(Desktop::Rule::RULE_PROP_ALL, Desktop::Types::PRIORITY_LAYOUT);
     PWINDOW->updateWindowData();
 
-    static auto PGAPSINDATA  = CConfigValue<Hyprlang::CUSTOMTYPE>("general:gaps_in");
-    static auto PGAPSOUTDATA = CConfigValue<Hyprlang::CUSTOMTYPE>("general:gaps_out");
-    auto* const PGAPSIN      = (CCssGapData*)(PGAPSINDATA.ptr())->getData();
-    auto* const PGAPSOUT     = (CCssGapData*)(PGAPSOUTDATA.ptr())->getData();
+    static auto PGAPSINDATA = CConfigValue<Hyprlang::CUSTOMTYPE>("general:gaps_in");
+    auto* const PGAPSIN     = (CCssGapData*)(PGAPSINDATA.ptr())->getData();
 
     auto        gapsIn  = WORKSPACERULE.gapsIn.value_or(*PGAPSIN);
     CBox        nodeBox = data->layoutBox;
@@ -482,8 +481,10 @@ void CScrollingLayout::onEnable() {
         for (auto& w : widths) {
             try {
                 m_config.configuredWidths.emplace_back(std::stof(std::string{w}));
-            } catch (...) { Debug::log(ERR, "scrolling: Failed to parse width {} as float", w); }
+            } catch (...) { Log::logger->log(Log::ERR, "scrolling: Failed to parse width {} as float", w); }
         }
+        if (m_config.configuredWidths.empty())
+            m_config.configuredWidths = {0.333, 0.5, 0.667, 1.0};
     });
 
     m_focusCallback = g_pHookSystem->hookDynamic("activeWindow", [this](void* hk, SCallbackInfo& info, std::any param) {
@@ -506,8 +507,17 @@ void CScrollingLayout::onEnable() {
         if (!DATA || !WINDOWDATA)
             return;
 
-        DATA->fitCol(WINDOWDATA->column.lock());
+        static const auto PFOLLOW_DEBOUNCE_MS = CConfigValue<Hyprlang::INT>("plugin:hyprscrolling:follow_debounce_ms");
+        static CTimer     debounceTimer;
+        if (debounceTimer.getMillis() < *PFOLLOW_DEBOUNCE_MS)
+            return;
+        static const auto PFITMETHOD = CConfigValue<Hyprlang::INT>("plugin:hyprscrolling:focus_fit_method");
+        if (*PFITMETHOD == 1)
+            DATA->fitCol(WINDOWDATA->column.lock());
+        else
+            DATA->centerCol(WINDOWDATA->column.lock());
         DATA->recalculate();
+        debounceTimer.reset();
     });
 
     for (auto const& w : g_pCompositor->m_windows) {
@@ -530,7 +540,7 @@ void CScrollingLayout::onWindowCreatedTiling(PHLWINDOW window, eDirection direct
     auto workspaceData = dataFor(window->m_workspace);
 
     if (!workspaceData) {
-        Debug::log(LOG, "[scrolling] No workspace data yet, creating");
+        Log::logger->log(Log::DEBUG, "[scrolling] No workspace data yet, creating");
         workspaceData       = m_workspaceDatas.emplace_back(makeShared<SWorkspaceData>(window->m_workspace, this));
         workspaceData->self = workspaceData;
     }
@@ -538,13 +548,13 @@ void CScrollingLayout::onWindowCreatedTiling(PHLWINDOW window, eDirection direct
     auto droppingOn = Desktop::focusState()->window();
 
     if (droppingOn == window)
-        droppingOn = g_pCompositor->vectorToWindowUnified(g_pInputManager->getMouseCoordsInternal(), RESERVED_EXTENTS | INPUT_EXTENTS);
+        droppingOn = g_pCompositor->vectorToWindowUnified(g_pInputManager->getMouseCoordsInternal(), Desktop::View::RESERVED_EXTENTS | Desktop::View::INPUT_EXTENTS);
 
     SP<SScrollingWindowData> droppingData   = droppingOn ? dataFor(droppingOn) : nullptr;
     SP<SColumnData>          droppingColumn = droppingData ? droppingData->column.lock() : nullptr;
 
-    Debug::log(LOG, "[scrolling] new window {:x}, droppingColumn: {:x}, columns before: {}", (uintptr_t)window.get(), (uintptr_t)droppingColumn.get(),
-               workspaceData->columns.size());
+    Log::logger->log(Log::DEBUG, "[scrolling] new window {:x}, droppingColumn: {:x}, columns before: {}", (uintptr_t)window.get(), (uintptr_t)droppingColumn.get(),
+                     workspaceData->columns.size());
 
     if (!droppingColumn) {
         auto col = workspaceData->add();
@@ -769,7 +779,7 @@ void CScrollingLayout::fullscreenRequestForWindow(PHLWINDOW pWindow, const eFull
 
             SP<SScrollingWindowData> fakeNode = makeShared<SScrollingWindowData>(pWindow, nullptr);
             fakeNode->window                  = pWindow;
-            fakeNode->layoutBox               = PMONITOR->logicalBoxMinusReserved();
+            fakeNode->layoutBox               = workAreaOnWorkspace(PWORKSPACE);
             pWindow->m_size                   = fakeNode->layoutBox.size();
             fakeNode->ignoreFullscreenChecks  = true;
             fakeNode->overrideWorkspace       = pWindow->m_workspace;
@@ -1538,5 +1548,5 @@ SP<SWorkspaceData> CScrollingLayout::currentWorkspaceData() {
 }
 
 CBox CScrollingLayout::usableAreaFor(PHLMONITOR m) {
-    return m->logicalBoxMinusReserved().translate(-m->m_position);
+    return workAreaOnWorkspace(m->m_activeWorkspace).translate(-m->m_position);
 }
